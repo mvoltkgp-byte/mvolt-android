@@ -1,0 +1,67 @@
+name: Build Android bundle
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      KS: ${{ secrets.KEYSTORE_BASE64 }}
+      KSPASS: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEYALIAS: ${{ secrets.KEY_ALIAS }}
+      KEYPASS: ${{ secrets.KEY_PASSWORD }}
+      ADMOB_APP_ID: ${{ vars.ADMOB_APP_ID }}
+      ADMOB_BANNER_ID: ${{ vars.ADMOB_BANNER_ID }}
+      ADMOB_REWARDED_ID: ${{ vars.ADMOB_REWARDED_ID }}
+      REVENUECAT_KEY: ${{ vars.REVENUECAT_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm install
+      - name: Add Pro plan plugin (RevenueCat)
+        if: env.REVENUECAT_KEY != ''
+        continue-on-error: true
+        run: npm install @revenuecat/purchases-capacitor
+      - run: npx cap add android
+      - name: Make app icons
+        continue-on-error: true
+        run: npx @capacitor/assets generate --android --iconBackgroundColor '#05060F'
+      - name: Set AI address
+        if: vars.AI_URL != ''
+        env:
+          AIURL: ${{ vars.AI_URL }}
+        run: sed -i "s#https://YOUR-WORKER.workers.dev/ai#${AIURL}#" www/index.html
+      - name: Set ad and plan IDs
+        run: |
+          [ -n "$ADMOB_BANNER_ID" ] && sed -i "s#ca-app-pub-3940256099942544/6300978111#${ADMOB_BANNER_ID}#" www/index.html || true
+          [ -n "$ADMOB_REWARDED_ID" ] && sed -i "s#ca-app-pub-3940256099942544/5224354917#${ADMOB_REWARDED_ID}#" www/index.html || true
+          [ -n "$REVENUECAT_KEY" ] && sed -i "s#YOUR-REVENUECAT-KEY#${REVENUECAT_KEY}#" www/index.html || true
+      - name: Add AdMob app ID and ad permission to the manifest
+        run: |
+          APPID="${ADMOB_APP_ID:-ca-app-pub-3940256099942544~3347511713}"
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i "s#</application>#    <meta-data android:name=\"com.google.android.gms.ads.APPLICATION_ID\" android:value=\"${APPID}\"/>\n    </application>#" $M
+          sed -i "s#<application#<uses-permission android:name=\"com.google.android.gms.permission.AD_ID\"/>\n    <application#" $M
+          grep -n "APPLICATION_ID\|AD_ID" $M
+      - run: npx cap sync android
+      - name: Set version code
+        run: sed -i -E "s/versionCode( =)? +[0-9]+/versionCode = ${{ github.run_number }}/" android/app/build.gradle
+      - name: Build bundle
+        working-directory: android
+        run: ./gradlew bundleRelease
+      - name: Sign bundle
+        if: env.KS != ''
+        run: |
+          echo "$KS" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          jarsigner -keystore "$RUNNER_TEMP/upload.jks" -storepass "$KSPASS" -keypass "$KEYPASS" -sigalg SHA256withRSA -digestalg SHA-256 android/app/build/outputs/bundle/release/app-release.aab "$KEYALIAS"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mvolt-release-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab

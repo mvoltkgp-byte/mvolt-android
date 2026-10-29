@@ -1,0 +1,9 @@
+name = "mvolt-ai"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[[kv_namespaces]]
+binding = "LIMITS"
+id = "PASTE_YOUR_KV_ID_HERE"
+
+# Secrets (set in the dashboard, not here): ANTHROPIC_API_KEY, ADMIN_KEY, REVENUECAT_SECRET
